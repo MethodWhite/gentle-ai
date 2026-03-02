@@ -109,7 +109,10 @@ func Inject(homeDir string, adapter agents.Adapter) (InjectionResult, error) {
 				assetPath := "skills/_shared/" + fileName
 				content, readErr := assets.Read(assetPath)
 				if readErr != nil {
-					continue
+					return InjectionResult{}, fmt.Errorf("required SDD shared file %q: embedded asset not found: %w", fileName, readErr)
+				}
+				if len(content) == 0 {
+					return InjectionResult{}, fmt.Errorf("required SDD shared file %q: embedded asset is empty", fileName)
 				}
 
 				path := filepath.Join(skillDir, "_shared", fileName)
@@ -131,7 +134,10 @@ func Inject(homeDir string, adapter agents.Adapter) (InjectionResult, error) {
 				assetPath := "skills/" + skill + "/SKILL.md"
 				content, readErr := assets.Read(assetPath)
 				if readErr != nil {
-					continue
+					return InjectionResult{}, fmt.Errorf("required SDD skill %q: embedded asset not found: %w", skill, readErr)
+				}
+				if len(content) == 0 {
+					return InjectionResult{}, fmt.Errorf("required SDD skill %q: embedded asset is empty", skill)
 				}
 
 				path := filepath.Join(skillDir, skill, "SKILL.md")
@@ -142,6 +148,36 @@ func Inject(homeDir string, adapter agents.Adapter) (InjectionResult, error) {
 
 				changed = changed || writeResult.Changed
 				files = append(files, path)
+			}
+		}
+	}
+
+	// 4. Post-injection verification — catch silent failures.
+	if adapter.Agent() == model.AgentOpenCode {
+		settingsPath := adapter.SettingsPath(homeDir)
+		if settingsPath != "" {
+			settingsData, err := os.ReadFile(settingsPath)
+			if err != nil {
+				return InjectionResult{}, fmt.Errorf("post-check: cannot read %q: %w", settingsPath, err)
+			}
+			if !strings.Contains(string(settingsData), `"sdd-orchestrator"`) {
+				return InjectionResult{}, fmt.Errorf("post-check: %q missing sdd-orchestrator agent definition — OpenCode /sdd-* commands will fail", settingsPath)
+			}
+		}
+	}
+
+	if adapter.SupportsSkills() {
+		skillDir := adapter.SkillsDir(homeDir)
+		if skillDir != "" {
+			for _, skill := range []string{"sdd-init", "sdd-apply", "sdd-verify"} {
+				path := filepath.Join(skillDir, skill, "SKILL.md")
+				info, err := os.Stat(path)
+				if err != nil {
+					return InjectionResult{}, fmt.Errorf("post-check: SDD skill %q not found on disk: %w", skill, err)
+				}
+				if info.Size() < 100 {
+					return InjectionResult{}, fmt.Errorf("post-check: SDD skill %q is too small (%d bytes) — content may be empty or corrupt", skill, info.Size())
+				}
 			}
 		}
 	}

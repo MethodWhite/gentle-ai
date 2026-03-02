@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"fmt"
 	"log"
 	"path/filepath"
 
@@ -46,13 +47,14 @@ func Inject(homeDir string, adapter agents.Adapter, skillIDs []model.SkillID) (I
 			skipped = append(skipped, id)
 			continue
 		}
+		if len(content) == 0 {
+			return InjectionResult{}, fmt.Errorf("skill %q: embedded asset exists but is empty — build may be corrupt", id)
+		}
 
 		path := filepath.Join(skillDir, string(id), "SKILL.md")
 		writeResult, writeErr := filemerge.WriteFileAtomic(path, []byte(content), 0o644)
 		if writeErr != nil {
-			log.Printf("skills: skipping %q — write error: %v", id, writeErr)
-			skipped = append(skipped, id)
-			continue
+			return InjectionResult{}, fmt.Errorf("skill %q: write failed: %w", id, writeErr)
 		}
 
 		changed = changed || writeResult.Changed
