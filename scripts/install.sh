@@ -179,19 +179,25 @@ detect_install_method() {
 install_brew() {
     step "Installing via Homebrew"
 
-    info "Tapping ${BREW_TAP}..."
+    # Always refresh the tap to pick up new releases
+    info "Refreshing ${BREW_TAP}..."
+    brew untap "$BREW_TAP" 2>/dev/null || true
     if ! brew tap "$BREW_TAP"; then
         fatal "Failed to tap $BREW_TAP"
     fi
 
-    info "Installing ${BINARY_NAME}..."
-    if brew install "$BINARY_NAME"; then
-        success "Installed ${BINARY_NAME} via Homebrew"
-    else
-        # If already installed, try upgrade
-        warn "Install failed, attempting upgrade..."
+    if brew list "$BINARY_NAME" &>/dev/null; then
+        info "Already installed, upgrading ${BINARY_NAME}..."
         if brew upgrade "$BINARY_NAME" 2>/dev/null; then
             success "Upgraded ${BINARY_NAME} via Homebrew"
+        else
+            # "already up-to-date" also exits non-zero on some brew versions
+            success "${BINARY_NAME} is already at the latest version"
+        fi
+    else
+        info "Installing ${BINARY_NAME}..."
+        if brew install "$BINARY_NAME"; then
+            success "Installed ${BINARY_NAME} via Homebrew"
         else
             fatal "Failed to install ${BINARY_NAME} via Homebrew"
         fi
