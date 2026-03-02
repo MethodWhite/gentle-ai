@@ -1182,6 +1182,165 @@ test_gga_config() {
     fi
 }
 
+# --- Category 7: Injection integrity (guards against issue #4 regression) ---
+
+test_integrity_sdd_skills_nonempty() {
+    log_test "Integrity: every SDD SKILL.md has real content (>100 bytes)"
+    cleanup_test_env
+
+    if $BINARY install --agent opencode --component sdd --persona neutral 2>&1; then
+        local skill_dir="$HOME/.config/opencode/skills"
+        local all_ok=true
+        local sdd_skills=(sdd-init sdd-explore sdd-propose sdd-spec sdd-design sdd-tasks sdd-apply sdd-verify sdd-archive)
+
+        for skill in "${sdd_skills[@]}"; do
+            local path="$skill_dir/$skill/SKILL.md"
+            if [ ! -f "$path" ]; then
+                log_fail "SDD skill missing: $path"
+                all_ok=false
+                continue
+            fi
+            local size
+            size=$(wc -c < "$path" | tr -d ' ')
+            if [ "$size" -lt 100 ]; then
+                log_fail "SDD skill empty or too small ($size bytes): $skill"
+                all_ok=false
+            fi
+        done
+
+        if $all_ok; then
+            log_pass "All 9 SDD skills have >= 100 bytes of real content"
+        fi
+    else
+        log_fail "SDD install command failed"
+    fi
+}
+
+test_integrity_sdd_orchestrator_in_opencode_json() {
+    log_test "Integrity: opencode.json contains sdd-orchestrator agent after SDD install"
+    cleanup_test_env
+
+    if $BINARY install --agent opencode --component sdd --persona neutral 2>&1; then
+        local settings="$HOME/.config/opencode/opencode.json"
+        assert_file_exists "$settings" "opencode.json exists"
+        assert_file_contains "$settings" '"sdd-orchestrator"' "Has sdd-orchestrator agent"
+        assert_file_contains "$settings" '"agent"' "Has agent key"
+        assert_valid_json "$settings" "opencode.json is valid JSON"
+    else
+        log_fail "SDD install for orchestrator check failed"
+    fi
+}
+
+test_integrity_all_sdd_commands_have_frontmatter() {
+    log_test "Integrity: all 8 SDD command files have YAML frontmatter"
+    cleanup_test_env
+
+    if $BINARY install --agent opencode --component sdd --persona neutral 2>&1; then
+        local commands_dir="$HOME/.config/opencode/commands"
+        local all_ok=true
+        local expected_commands=(sdd-init sdd-apply sdd-archive sdd-continue sdd-explore sdd-ff sdd-new sdd-verify)
+
+        for cmd in "${expected_commands[@]}"; do
+            local path="$commands_dir/$cmd.md"
+            if [ ! -f "$path" ]; then
+                log_fail "SDD command missing: $cmd.md"
+                all_ok=false
+                continue
+            fi
+            # Must start with --- (YAML frontmatter)
+            if ! head -1 "$path" | grep -q '^---'; then
+                log_fail "SDD command $cmd.md missing YAML frontmatter"
+                all_ok=false
+            fi
+            # Must contain agent: sdd-orchestrator (except sdd-continue, sdd-ff, sdd-new which use different agent)
+            local size
+            size=$(wc -c < "$path" | tr -d ' ')
+            if [ "$size" -lt 50 ]; then
+                log_fail "SDD command $cmd.md too small ($size bytes)"
+                all_ok=false
+            fi
+        done
+
+        if $all_ok; then
+            log_pass "All 8 SDD commands present with frontmatter and content"
+        fi
+    else
+        log_fail "SDD install for command check failed"
+    fi
+}
+
+test_integrity_full_preset_all_skills_nonempty() {
+    log_test "Integrity: full preset — every SKILL.md is non-empty"
+    cleanup_test_env
+
+    if $BINARY install --agent opencode --component sdd --component skills --preset full-gentleman --persona gentleman 2>&1; then
+        local skill_dir="$HOME/.config/opencode/skills"
+        local all_ok=true
+        local empty_count=0
+
+        while IFS= read -r skill_file; do
+            local size
+            size=$(wc -c < "$skill_file" | tr -d ' ')
+            if [ "$size" -lt 100 ]; then
+                log_fail "Skill file empty/corrupt ($size bytes): $skill_file"
+                all_ok=false
+                empty_count=$((empty_count + 1))
+            fi
+        done < <(find "$skill_dir" -name "SKILL.md" -type f)
+
+        if $all_ok; then
+            local total
+            total=$(find "$skill_dir" -name "SKILL.md" -type f | wc -l | tr -d ' ')
+            log_pass "All $total skill files have >= 100 bytes of real content"
+        else
+            log_fail "$empty_count skill file(s) are empty or corrupt"
+        fi
+    else
+        log_fail "Full preset install for integrity check failed"
+    fi
+}
+
+test_integrity_sdd_orchestrator_agent_structure() {
+    log_test "Integrity: sdd-orchestrator agent has required fields in opencode.json"
+    cleanup_test_env
+
+    if $BINARY install --agent opencode --component sdd --persona gentleman 2>&1; then
+        local settings="$HOME/.config/opencode/opencode.json"
+        assert_file_contains "$settings" '"sdd-orchestrator"' "Has sdd-orchestrator"
+        assert_file_contains "$settings" '"mode"' "Agent has mode field"
+        assert_file_contains "$settings" '"prompt"' "Agent has prompt field"
+        assert_file_contains "$settings" 'AGENTS.md' "Agent prompt references AGENTS.md"
+    else
+        log_fail "SDD + persona install for agent structure check failed"
+    fi
+}
+
+test_integrity_skills_plus_sdd_coexist() {
+    log_test "Integrity: SDD + skills components write non-empty files that coexist"
+    cleanup_test_env
+
+    if $BINARY install --agent opencode --component sdd --component skills --preset full-gentleman --persona neutral 2>&1; then
+        local skill_dir="$HOME/.config/opencode/skills"
+
+        # SDD skills should exist
+        assert_file_size_min "$skill_dir/sdd-init/SKILL.md" 100 "sdd-init skill has content"
+        assert_file_size_min "$skill_dir/sdd-apply/SKILL.md" 100 "sdd-apply skill has content"
+
+        # Foundation skills should also exist
+        assert_file_size_min "$skill_dir/go-testing/SKILL.md" 100 "go-testing skill has content"
+        assert_file_size_min "$skill_dir/skill-creator/SKILL.md" 100 "skill-creator skill has content"
+
+        # Shared SDD conventions should exist
+        assert_file_exists "$skill_dir/_shared/persistence-contract.md" "Shared persistence contract"
+        assert_file_size_min "$skill_dir/_shared/persistence-contract.md" 50 "Persistence contract has content"
+
+        # opencode.json should have sdd-orchestrator
+        assert_file_contains "$HOME/.config/opencode/opencode.json" '"sdd-orchestrator"' "sdd-orchestrator present"
+    else
+        log_fail "SDD + skills coexistence install failed"
+    fi
+}
+
 # ===========================================================================
 # TIER 3 — Backup / restore tests (require RUN_BACKUP_TESTS=1)
 # ===========================================================================
@@ -1414,6 +1573,14 @@ if [ "${RUN_FULL_E2E:-0}" = "1" ]; then
 
     # GGA
     test_gga_config
+
+    # Category 7: Injection integrity (issue #4 regression guard)
+    test_integrity_sdd_skills_nonempty
+    test_integrity_sdd_orchestrator_in_opencode_json
+    test_integrity_all_sdd_commands_have_frontmatter
+    test_integrity_full_preset_all_skills_nonempty
+    test_integrity_sdd_orchestrator_agent_structure
+    test_integrity_skills_plus_sdd_coexist
 else
     log_skip "Tier 2 tests (set RUN_FULL_E2E=1 to enable)"
 fi
