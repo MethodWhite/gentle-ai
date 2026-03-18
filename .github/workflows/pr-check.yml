@@ -13,6 +13,13 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // Skip dependabot PRs - they're automated
+            const author = context.payload.pull_request.user.login;
+            if (author === 'dependabot[bot]' || author === 'dependabot') {
+              core.notice('⊘ Skipping dependabot PR');
+              return;
+            }
+
             const body = context.payload.pull_request.body || '';
             const pattern = /(?:closes|fixes|resolves)\s+#(\d+)/gi;
             const matches = [...body.matchAll(pattern)];
